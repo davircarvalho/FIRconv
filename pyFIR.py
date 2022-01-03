@@ -1,9 +1,30 @@
 '''
 pyFIR - 2022
---------------------------------------------
+------------------------------------------------------------------------------
 Python FIR filters for real-time convolution
---------------------------------------------
-Authors: Davi Rocha Carvalho 
+------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2022 Davi Carvalho
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 '''
 
 import numpy as np
@@ -27,13 +48,11 @@ class FIRfilter():
         self.Ny = None
         self.stored_h = h
         self.left_overs = np.zeros((B,)) # remaining samples from last ifft (OLA)
-        
-        
+               
     
     def len(x):
         return max(np.shape(x))
-        
-        
+                
 
     def pad_zeros_to(self, x, new_length):
         output = np.zeros((new_length,))
@@ -41,10 +60,8 @@ class FIRfilter():
         return output
 
 
-
     def next_power_of_2(self, n):
         return 1 << (int(np.log2(n - 1)) + 1)
-
 
 
     def fft_conv(self,x, h):
@@ -58,8 +75,7 @@ class FIRfilter():
         return ifft(X * self.H).real 
 
 
-
-    def overlap_add(self, x, h):
+    def OLA(self, x, h):
         if self.NFFT is None:
             Nx = max(x.shape)
             Nh = max(h.shape)
@@ -77,8 +93,7 @@ class FIRfilter():
         return out
 
 
-
-    def overlap_save(self, x, h):
+    def OLS(self, x, h):
         if self.NFFT is None:
             Nx = max(x.shape)
             Nh = max(h.shape)
@@ -95,7 +110,6 @@ class FIRfilter():
         return y[-self.B:]
 
 
-
     def process(self, x, h):       
         # check if the impulse response h has changed
         if np.all(h != self.stored_h):
@@ -104,10 +118,6 @@ class FIRfilter():
             
         # convolve
         if self.method == 'overlap-save':
-            return self.overlap_save(x, h)
+            return self.OLS(x, h)
         if self.method == 'overlap-add':
-            return self.overlap_add(x, h)
-
-
-
-
+            return self.OLA(x, h)
