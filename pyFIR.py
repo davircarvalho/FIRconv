@@ -60,7 +60,7 @@ class FIRfilter():
 
     
     def pad_beginning(self, x, padding):
-        new_length = x.shape[0] + padding
+        new_length = max(x.shape) + padding
         output = np.zeros((new_length,))
         output[-x.shape[0]:] = x
         return output
@@ -117,49 +117,47 @@ class FIRfilter():
         return y[-self.B:]
 
     
-    def UPOLS(self, x,h):
+    def UPOLS(self,x,h):
         '''(generalized) Uniformly Partitioned Overlap-Save
             - generalized means that you can pick the partition size
         '''
         if self.NFFT is None: # only run on on initial call 
-            Nx = max(x.shape)
-            Nh = max(h.shape)
-            # self.NFFT = self.next_power_of_2(Nx + Nh - 1) 
-            self.NFFT = 2*self.B
             L_partit = self.partition # sub filter length (partition length)
+            dmax = self.B - np.gcd(L_partit, self.B)           
+            self.NFFT = self.B + L_partit + dmax
+            Nh = max(h.shape)
             self.P = int(np.ceil(Nh/L_partit)) # number of partitions done
             # Input buffer
             self.input_buffer = np.zeros(shape=(self.NFFT,))                
             # variables for delay line
-            # nB = np.zeros((P,)) # block multiple delay nB
-            # dm = np.zeros((P,)) # remainder delay (added at the beginning)
-            kmax = np.lcm(L_partit, self.B)/L_partit
-            dmax = self.B - np.gcd(L_partit, self.B)
+            self.nm = np.zeros((self.P,)) # tells us which FDL should be used
             self.FDL = np.zeros((self.P, self.NFFT), dtype='complex_')  # delay line 
             self.H = np.zeros((self.P, self.NFFT),dtype='complex_') # partitioned filters (freq domain)
+            
             # (1) split original filter into P length-L sub filters  
             for m, ii in enumerate(range(0, Nh, L_partit)):
                 try:
                     h_partit = h[ii : ii+L_partit]
                 except:
+                    print('except')
                     h_partit = self.pad_the_end(h[ii:], L_partit)
                     
-                # (2) incorporate "remainder delays"
-                if m < kmax:
-                    dm = np.mod(m*L_partit, self.B)
-                else:
-                    dm = dmax          
+                # (2) incorporate "remainder delays"         
+                dm = np.mod(m*L_partit, self.B)         
                 h_pad = self.pad_the_end(self.pad_beginning(h_partit, dm), self.NFFT)  
-                self.H[m,:] = fft(h_pad)                
-                
-        # Sliding window of the input
-        self.input_buffer = np.roll(self.input_buffer, -self.B) #previous contents are shifted B samples to the left
-        self.input_buffer[self.B:2*self.B] = x #next length-B input block is stored rightmost     
-        ### Stream ###
-        self.FDL = np.roll(self.FDL, -1, axis=0) # shift the FDL to create space for current input  
+                self.H[m,:] = fft(h_pad, n=self.NFFT)    
+                self.nm[m] = np.floor(m*L_partit/self.B)  # FDL active slots        
+            self.nm = self.nm.astype(int)
+
+        # (3) Sliding window of the input
+        self.input_buffer = np.roll(self.input_buffer, shift=-self.B) #previous contents are shifted B samples to the left
+        self.input_buffer[-self.B:] = x #next length-B input block is stored rightmost     
+        # (4) Stream 
+        self.FDL = np.roll(self.FDL, shift=1, axis=0) # shift the FDL to create space for current input  
         self.FDL[0,:] = fft(self.input_buffer) # add current buffer to the first FDL slot
         # convo
-        out = np.sum(ifft(np.multiply(self.FDL, self.H)).real, axis=0)
+        # note: the sum is done in the frequency domain (yep!)
+        out = ifft(np.sum(np.multiply(self.FDL[self.nm,:], self.H), axis=0),n=self.NFFT).real
         return out[-self.B:]
                   
                   
