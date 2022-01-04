@@ -7,3 +7,8 @@ The algorithms are mainly *(but not strictly)* the ones described in **WEFERS, F
 # Current algorithms 
 - Overlap-add (OLA);
 - Overlap-save (OLS);
+- Uniformily Partitioned Overlap-Save (UPOLS) (generalized version)
+
+
+
+*Everything is kinda working at this stage, but keep in mind bugs ands mistakes are expected.*
