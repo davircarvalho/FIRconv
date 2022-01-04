@@ -29,8 +29,9 @@ SOFTWARE.
 
 import numpy as np
 from numpy.core.fromnumeric import partition
+from numpy.core.numeric import Inf
 from numpy.fft import fft, ifft
-
+from time import time 
 
 class FIRfilter():
     '''
@@ -39,7 +40,7 @@ class FIRfilter():
         h: optional call, initializes the impulse response to be convolved
     '''
     
-    def __init__(self, method="overlap-save", B=512, h=None, partition=512):    
+    def __init__(self, method="overlap-save", B=512, h=None, partition=None):    
         self.method = method
         self.B = B                # block size (audio input len, which will also be the output size)
         self.NFFT = None          # fft/ifft size
@@ -47,28 +48,22 @@ class FIRfilter():
         self.stored_h = h         # save IR for comparison next frame (optional input)
         self.left_overs = np.zeros((B,)) # remaining samples from last ifft (OLA)
         self.partition = partition # partition size (UPOLS)       
-        
-        
-    def len(x):
-        return max(np.shape(x))
+    
                 
 
     def pad_the_end(self, x, new_length):
         output = np.zeros((new_length,))
         output[:x.shape[0]] = x
         return output
-
     
     def pad_beginning(self, x, padding):
         new_length = max(x.shape) + padding
         output = np.zeros((new_length,))
         output[-x.shape[0]:] = x
         return output
-    
 
     def next_power_of_2(self, n):
         return 1 << (int(np.log2(n - 1)) + 1)
-
 
     def fft_conv(self,x, h):
         # Calculate x fft
@@ -81,14 +76,15 @@ class FIRfilter():
 
 
     def OLA(self, x, h):
+        '''Overlap-add convolution'''
         if self.NFFT is None:
             Nx = max(x.shape)
             Nh = max(h.shape)
-            self.NFFT = self.next_power_of_2(Nx + Nh - 1) 
-        
+            self.NFFT = self.next_power_of_2(Nx + Nh - 1)  
+                 
         # Fast convolution
         y = self.fft_conv(x, h)
-
+        
         # Overlap-Add the partial convolution result        
         out = y[:self.B] + self.left_overs[:self.B]
         
@@ -101,6 +97,7 @@ class FIRfilter():
 
 
     def OLS(self, x, h):
+        '''Overlap-save convolution'''
         if self.NFFT is None:
             Nx = max(x.shape)
             Nh = max(h.shape)
@@ -116,30 +113,67 @@ class FIRfilter():
         y = self.fft_conv(self.OLS_buffer, h)     
         return y[-self.B:]
 
+
+    def cost(self,B,N,L,K):
+        '''rough theoretical time estimates for each operation, pag. 211'''
+        def T_fft(n):
+            return 1.68 *n*np.log2(n)
+        def T_ifft(n):
+            return 3.49 *n*np.log2(n)
+        def T_cmul(n):
+            return 6*n
+        def T_cmac(n):
+            return 8*n   
+        return 1/B*(T_fft(K) + T_ifft(K) + T_cmul((K+1)/2) + ((N/L)-1)*T_cmac((K+1)/2))
+        
+    
+    def optimize_UPOLS_parameters(self, N):
+        '''brute-force the optimal parameters for UPOLS'''
+        print('Running UPOLS optimization first, this may take a few minutes to run deppending on the length of the impulse respose, to avoid this optimization prcedure, simply declare a "partition" value at the class initialization')
+        c_opt = Inf
+        rang = np.array([2**k for k in range(0, int(np.log2(N)))]).astype('int')
+        for L in rang:
+            d_max = self.B - np.gcd(L,self.B)
+            K_min = int(self.B + L + d_max - 1)
+            K_max = int(2**np.ceil(np.log2(K_min)))
+            k_sort = np.sort([K_min, K_max])
+            if k_sort[0] == k_sort[1]:
+                k_sort[1] = k_sort[1]+1
+            
+            for K in range(k_sort[0], k_sort[1]):
+                c = self.cost(self.B,N,L,K)
+                if c < c_opt:
+                    c_opt = c
+                    L_opt = L
+                    K_opt = K
+        return L_opt, K_opt
+        
     
     def UPOLS(self,x,h):
         '''(generalized) Uniformly Partitioned Overlap-Save
             - generalized means that you can pick the partition size
         '''
         if self.NFFT is None: # only run on on initial call 
-            L_partit = self.partition # sub filter length (partition length)
-            dmax = self.B - np.gcd(L_partit, self.B)           
-            self.NFFT = self.B + L_partit + dmax
             Nh = max(h.shape)
-            self.P = int(np.ceil(Nh/L_partit)) # number of partitions done
-            # Input buffer
-            self.input_buffer = np.zeros(shape=(self.NFFT,))                
-            # variables for delay line
-            self.nm = np.zeros((self.P,)) # tells us which FDL should be used
-            self.FDL = np.zeros((self.P, self.NFFT), dtype='complex_')  # delay line 
+            if self.partition is None:
+                self.partition, self.NFFT = self.optimize_UPOLS_parameters(Nh)
+                L_partit = self.partition
+            else:
+                L_partit = self.partition              
+                dmax = self.B - np.gcd(L_partit, self.B)           
+                self.NFFT = self.B + L_partit + dmax 
+            
+            self.P = int(np.ceil(Nh/L_partit)) # number of partitions done          
+            self.input_buffer = np.zeros(shape=(self.NFFT,))   # Initialize input buffer              
+            # Initialize filter and FDL
+            self.nm = np.zeros((self.P,)) # tells us which FDL positions should be used 
             self.H = np.zeros((self.P, self.NFFT),dtype='complex_') # partitioned filters (freq domain)
             
             # (1) split original filter into P length-L sub filters  
             for m, ii in enumerate(range(0, Nh, L_partit)):
                 try:
-                    h_partit = h[ii : ii+L_partit]
+                    h_partit = h[ii:ii+L_partit]
                 except:
-                    print('except')
                     h_partit = self.pad_the_end(h[ii:], L_partit)
                     
                 # (2) incorporate "remainder delays"         
@@ -148,7 +182,8 @@ class FIRfilter():
                 self.H[m,:] = fft(h_pad, n=self.NFFT)    
                 self.nm[m] = np.floor(m*L_partit/self.B)  # FDL active slots        
             self.nm = self.nm.astype(int)
-
+            self.FDL = np.zeros((max(self.nm)+1, self.NFFT), dtype='complex_')  # delay line 
+            
         # (3) Sliding window of the input
         self.input_buffer = np.roll(self.input_buffer, shift=-self.B) #previous contents are shifted B samples to the left
         self.input_buffer[-self.B:] = x #next length-B input block is stored rightmost     
@@ -157,7 +192,7 @@ class FIRfilter():
         self.FDL[0,:] = fft(self.input_buffer) # add current buffer to the first FDL slot
         # convo
         # note: the sum is done in the frequency domain (yep!)
-        out = ifft(np.sum(np.multiply(self.FDL[self.nm,:], self.H), axis=0),n=self.NFFT).real
+        out = ifft(np.sum(np.multiply(self.FDL[self.nm,:], self.H), axis=0)).real
         return out[-self.B:]
                   
                   
