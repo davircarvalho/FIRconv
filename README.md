@@ -11,4 +11,4 @@ The algorithms are mainly *(but not strictly)* the ones described in **WEFERS, F
 
 
 
-*Everything is kinda working at this stage, but keep in mind bugs ands mistakes are expected.*
+*Everything is kinda working at this stage, but keep in mind bugs and mistakes are expected.*
