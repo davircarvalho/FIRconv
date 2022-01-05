@@ -22,21 +22,24 @@ audio_in, fs = lb.load('letter.wav', sr=None, mono=False, duration=10, dtype=np.
 if np.size(audio_in.shape) < 2:
     audio_in = np.expand_dims(audio_in, 0)
     audio_in = np.append(audio_in, audio_in, axis=0)
-audio_in = audio_in *0.3
+audio_in = audio_in *0.1
 
 # Impulse response
-ir, _ = lb.load('narrow.wav', sr=fs, mono=False, dtype = np.float32) # binaural input signal
+ir, _ = lb.load('default.wav', sr=fs, mono=False, dtype = np.float32) # binaural input signal
 if np.size(ir.shape) < 2:
     ir = np.expand_dims(ir, 0)
     ir = np.append(ir, audio_in, axis=0)
-ir = ir *0.3  
+ir = ir *0.1
 
 
 # %% Initialize FIR filter
 buffer_sz = 4096
-method = 'overlap-add'
-firL = FIRfilter(method, buffer_sz)
-firR = FIRfilter(method, buffer_sz)
+# (optional) find optimal size UPOLS sub-filter partitions
+partition_size, _ = FIRfilter.optimize_UPOLS_parameters(FIRfilter,N=max(ir.shape), B=buffer_sz)
+
+method = 'UPOLS'
+firL = FIRfilter(method, buffer_sz, partition=partition_size)  
+firR = FIRfilter(method, buffer_sz, partition=partition_size)
 
 
 # %% Stream audio 
@@ -53,15 +56,16 @@ stream = p.open(format=pyaudio.paFloat32,
 frame_start = 0
 frame_end = frame_start + buffer_sz
 data = audio_in[:,frame_start:frame_end]
-data_out = data
+data_out = data * 0
 
 while frame_end <= max(audio_in.shape):  
     # process data 
     data_out[0,:] = firL.process(data[0,:], ir[0,:]) 
     data_out[1,:] = firR.process(data[1,:], ir[1,:]) 
     out = np.transpose(data_out)
+    
     # output data   
-    stream.write(out, buffer_sz)
+    stream.write(out*5, buffer_sz)
       
     # update reading positions
     frame_start = frame_end + 1

@@ -114,7 +114,7 @@ class FIRfilter():
         return y[-self.B:]
 
 
-    def cost(self,B,N,L,K):
+    def cost(B,N,L,K):
         '''rough theoretical time estimates for each operation, pag. 211'''
         def T_fft(n):
             return 1.68 *n*np.log2(n)
@@ -127,21 +127,22 @@ class FIRfilter():
         return 1/B*(T_fft(K) + T_ifft(K) + T_cmul((K+1)/2) + ((N/L)-1)*T_cmac((K+1)/2))
         
     
-    def optimize_UPOLS_parameters(self, N):
+    def optimize_UPOLS_parameters(self, N, B):
         '''brute-force the optimal parameters for UPOLS'''
         print('Running UPOLS optimization first, this may take a few minutes to run deppending on the length of the impulse respose, to avoid this optimization prcedure, simply declare a "partition" value at the class initialization')
+            
         c_opt = Inf
         rang = np.array([2**k for k in range(0, int(np.log2(N)))]).astype('int')
         for L in rang:
-            d_max = self.B - np.gcd(L,self.B)
-            K_min = int(self.B + L + d_max - 1)
+            d_max = B - np.gcd(L,B)
+            K_min = int(B + L + d_max - 1)
             K_max = int(2**np.ceil(np.log2(K_min)))
             k_sort = np.sort([K_min, K_max])
             if k_sort[0] == k_sort[1]:
                 k_sort[1] = k_sort[1]+1
             
             for K in range(k_sort[0], k_sort[1]):
-                c = self.cost(self.B,N,L,K)
+                c = self.cost(B,N,L,K)
                 if c < c_opt:
                     c_opt = c
                     L_opt = L
@@ -156,7 +157,7 @@ class FIRfilter():
         if self.NFFT is None: # only run on on initial call 
             Nh = max(h.shape)
             if self.partition is None:
-                self.partition, self.NFFT = self.optimize_UPOLS_parameters(Nh)
+                self.partition, self.NFFT = self.optimize_UPOLS_parameters(Nh, self.B)
                 L_partit = self.partition
             else:
                 L_partit = self.partition              
