@@ -115,22 +115,24 @@ class FIRfilter():
 
 
     def cost(B,N,L,K):
-        '''rough theoretical time estimates for each operation, pag. 211'''
-        def T_fft(n):
-            return 1.68 *n*np.log2(n)
-        def T_ifft(n):
-            return 3.49 *n*np.log2(n)
-        def T_cmul(n):
-            return 6*n
-        def T_cmac(n):
-            return 8*n   
-        return 1/B*(T_fft(K) + T_ifft(K) + T_cmul((K+1)/2) + ((N/L)-1)*T_cmac((K+1)/2))
+        '''theoretical time estimates for each operation, pag. 211'''
+        # def T_fft(n):
+        #     return 1.68 *n*np.log2(n)
+        # def T_ifft(n):
+        #     return 3.49 *n*np.log2(n)
+        # def T_cmul(n):
+        #     return 6*n
+        # def T_cmac(n):
+        #     return 8*n   
+        # return 1/B*(T_fft(K) + T_ifft(K) + T_cmul((K+1)/2) + ((N/L)-1)*T_cmac((K+1)/2))
+        return 1/B*( 1.68*K*np.log2(K) + 3.49*K*np.log2(K) + 6*((K+1)/2) + ((N/L)-1)*8*((K+1)/2))
         
     
     def optimize_UPOLS_parameters(self, N, B):
-        '''brute-force the optimal parameters for UPOLS'''
-        print('Running UPOLS optimization first, this may take a few minutes to run deppending on the length of the impulse respose, to avoid this optimization prcedure, simply declare a "partition" value at the class initialization')
-            
+        '''brute-force the optimal parameters for UPOLS
+            N: IR length
+            B: buffer size
+        '''            
         c_opt = Inf
         rang = np.array([2**k for k in range(0, int(np.log2(N)))]).astype('int')
         for L in rang:
@@ -157,6 +159,7 @@ class FIRfilter():
         if self.NFFT is None: # only run on on initial call 
             Nh = max(h.shape)
             if self.partition is None:
+                print('Running UPOLS parameter optimization, this may take a few minutes to run deppending on the length of the impulse respose, to avoid this optimization prcedure, simply declare a "partition" value at the class initialization')
                 self.partition, self.NFFT = self.optimize_UPOLS_parameters(Nh, self.B)
                 L_partit = self.partition
             else:
@@ -179,7 +182,7 @@ class FIRfilter():
                     
                 # (2) incorporate "remainder delays"         
                 dm = np.mod(m*L_partit, self.B)         
-                h_pad = self.pad_the_end(self.pad_beginning(h_partit, dm), self.NFFT)  
+                h_pad = self.pad_beginning(h_partit, dm)
                 self.H[m,:] = fft(h_pad, n=self.NFFT)    
                 self.nm[m] = np.floor(m*L_partit/self.B)  # FDL active slots        
             self.nm = self.nm.astype(int)
@@ -195,10 +198,58 @@ class FIRfilter():
         # note: the sum is done in the frequency domain (yep!)
         out = ifft(np.sum(np.multiply(self.FDL[self.nm,:], self.H), axis=0)).real
         return out[-self.B:]
+    
+    
+    
+    # def NUPOLS(self,x,h):
+    #     '''Non Uniformly Partitioned Overlap-Save
+    #     '''
+    #     def sub_UPOLS(self,xi,hi,Pi,L_partit):
+    #         '''
+    #         xi: High grain discretization of the original input x
+    #         Si: Filter segment
+    #         Pi: Number of filter partitions in the current segment
+    #         L_partit: Lenght of the current sub-filter partition
+    #         Bi: length of the xi input
+    #         '''
+    #         Nh = max(hi.shape)
+    #         Bi = Nh
+    #         NFFT = 2*Nh            
+    #         input_buffer = np.zeros(shape=(NFFT,))   # Initialize input buffer              
+    #         # Initialize filter and FDL
+    #         nm = np.zeros((Pi,)) # tells us which FDL positions should be used 
+    #         H = np.zeros((Pi, NFFT),dtype='complex_') # partitioned filters (freq domain)
+            
+    #         # (1) split original filter into P length-L sub filters  
+    #         for m, ii in enumerate(range(0, Nh, L_partit)):
+    #             try:
+    #                 h_partit = hi[ii:ii+L_partit]
+    #             except:
+    #                 h_partit = self.pad_the_end(hi[ii:], L_partit)
+                    
+    #             # (2) incorporate "remainder delays"         
+    #             dm = np.mod(m*L_partit, Bi)         
+    #             h_pad = self.pad_the_end(self.pad_beginning(h_partit, dm), NFFT)  
+    #             H[m,:] = fft(h_pad, n=NFFT)    
+    #             nm[m] = np.floor(m*L_partit/Bi)  # FDL active slots        
+    #         nm = nm.astype(int)
+    #         FDL = np.zeros((max(nm)+1, NFFT), dtype='complex_')  # delay line 
+            
+    #         # (4) sub-Stream 
+    #         # Sliding window of the input
+    #         input_buffer = np.roll(input_buffer, shift= -Bi) #previous contents are shifted B samples to the left
+    #         input_buffer[-Bi:] = xi #next length-B input block is stored rightmost     
+    #         FDL = np.roll(FDL, shift=1, axis=0) # shift the FDL to create space for current input  
+    #         FDL[0,:] = fft(input_buffer) # add current buffer to the first FDL slot
+    #         # convo
+    #         # note: the sum is done in the frequency domain (yep!)
+    #         out = ifft(np.sum(np.multiply(FDL[nm,:], H), axis=0)).real
+    #         return out[-Bi:]                 
+        # (1) Stablish filter segment sizes
+        
+            
                   
-                  
-                  
-# %% Main     
+# %% Main ###############################################################################    
     def process(self, x, h):       
         # check if the impulse response h has changed
         if np.all(h != self.stored_h):

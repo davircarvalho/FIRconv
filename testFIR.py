@@ -18,7 +18,7 @@ from pyFIR import FIRfilter
 
 # %% Load Inputs
 # Audio input
-audio_in, fs = lb.load('letter.wav', sr=None, mono=False, duration=10, dtype=np.float32) # binaural input signal
+audio_in, fs = lb.load('letter.wav', sr=None, mono=False, duration=30, dtype=np.float32) # binaural input signal
 if np.size(audio_in.shape) < 2:
     audio_in = np.expand_dims(audio_in, 0)
     audio_in = np.append(audio_in, audio_in, axis=0)
@@ -33,7 +33,7 @@ ir = ir *0.1
 
 
 # %% Initialize FIR filter
-buffer_sz = 4096
+buffer_sz = 256
 # (optional) find optimal size UPOLS sub-filter partitions
 partition_size, _ = FIRfilter.optimize_UPOLS_parameters(FIRfilter,N=max(ir.shape), B=buffer_sz)
 
@@ -65,7 +65,7 @@ while frame_end <= max(audio_in.shape):
     out = np.transpose(data_out)
     
     # output data   
-    stream.write(out*5, buffer_sz)
+    stream.write(out*3, buffer_sz)
       
     # update reading positions
     frame_start = frame_end + 1
