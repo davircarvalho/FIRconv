@@ -19,3 +19,6 @@ The algorithms are mainly *(but not strictly)* the ones described in **WEFERS, F
 Although to run the example in [testFIR.py](https://github.com/davircarvalho/pyFIR/blob/main/testFIR.py) you will also need:
 - librosa
 - pyaudio
+
+# TODO
+- Filter crossover
