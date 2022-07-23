@@ -46,7 +46,7 @@ for ch in range(N_ch):
 p = pyaudio.PyAudio()
 # open stream (2)
 stream = p.open(format=pyaudio.paFloat32,
-                channels=audio_in.shape[0],
+                channels=N_ch,
                 rate=fs,
                 output=True,
                 frames_per_buffer=buffer_sz)
@@ -54,7 +54,7 @@ stream = p.open(format=pyaudio.paFloat32,
 # play stream (3)
 frame_start = 0
 frame_end = frame_start + buffer_sz
-data_out = np.zeros((buffer_sz, 2))
+data_out = np.zeros((buffer_sz, N_ch))
 
 while frame_end <= max(audio_in.shape):
     # process data
