@@ -36,6 +36,35 @@ from time import time
 
 class FIRfilter():
     def __init__(self, method="overlap-save", B=512, h=None, partition=None, ref=50):
+        '''
+        Performs real-time convolution via FIR filters.
+
+        Parameters
+        ----------
+        method : str, optional
+            The FIR method to use, available ones are 'overlap-save', 'overlap-add',
+            'OLS' (same as overlap-save), 'OLA' (same as overlap-add),
+            'UPOLS' (uniformly partitioned overlap-save). The default is "overlap-save".
+        B : int, optional
+            Block size/buffer size, define the size of the audio chunk being procesed 
+            at a time unit. The default is 512.
+        h : np.array, optional
+            Impulse response signal to be convolved with the audio input. The default is None.
+        partition : int, optional
+            Partition size for the UPOLS filter. For general use it is recommended that 
+            you supply the impulse response instead of the partion size at class initilization,
+            by doing this, the optimal partition size will be calculated by default.
+        ref : int, float, optional
+            Defines a value that the audio signal and impulse response are divided before convolution
+            and multiplied after convolution to avoid distortion at playback. To bypass this 
+            "normalization", set < ref=1 >.The default is 50.
+
+        Returns
+        -------
+        FIRfilter.process(x, h) returns the convolution of block x with impulse response h.
+        Output has the same size as x and type: np.array
+
+        '''
         self.method = method.lower()
         self.B = B                # block size (audio input len, which will also be the output size)
         self.NFFT = None          # fft/ifft size
