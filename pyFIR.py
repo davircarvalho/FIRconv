@@ -35,22 +35,17 @@ from time import time
 
 
 class FIRfilter():
-    '''
-        method:  'overlap-save'(default) or 'overlap-add'
-        B: defines the block length
-        h: optional call, initializes the impulse response to be convolved
-    '''
-
-    def __init__(self, method="overlap-save", B=512, h=None, partition=None):
+    def __init__(self, method="overlap-save", B=512, h=None, partition=None, ref=50):
         self.method = method.lower()
         self.B = B                # block size (audio input len, which will also be the output size)
         self.NFFT = None          # fft/ifft size
         self.flagIRchanged = True  # check if the IR changed or it's still the same
-        self.stored_h = h         # save IR for comparison next frame (optional input)
+        self.stored_h = h        # save IR for comparison next frame (optional input)
         if h is not None:
             self.Nh = max(h.shape)
         self.left_overs = np.zeros((self.B,))  # remaining samples from last ifft (OLA)
         self.partition = partition  # partition size (UPOLS)
+        self.ref = ref
 
         validMethods = ['overlap-save', 'overlap-add', 'ols', 'ola', 'upols']
         error_msg = f'Unknown FIRfilter method: "{self.method}", \n Supported methods are: {validMethods}'
@@ -61,8 +56,12 @@ class FIRfilter():
             print(f'partition size: {self.partition} \n nfft: {self.NFFT}')
 
     def pad_the_end(self, x, new_length):
-        output = np.zeros((new_length,))
-        output[:x.shape[0]] = x
+        if x.shape[0] < new_length:
+            output = np.zeros((new_length,))
+            output[:x.shape[0]] = x
+        else:
+            output = x
+        print(f'padded out shape {output.shape}')
         return output
 
     def pad_beginning(self, x, padding):
@@ -86,9 +85,7 @@ class FIRfilter():
     def OLA(self, x, h):
         '''Overlap-add convolution'''
         if self.NFFT is None:
-            Nx = max(x.shape)
-            Nh = max(h.shape)
-            self.NFFT = Nx + Nh - 1
+            self.NFFT = self.B + max(h.shape) - 1
             self.left_overs = np.zeros((self.NFFT,))
 
         # Fast convolution
@@ -99,15 +96,13 @@ class FIRfilter():
 
         self.left_overs = np.roll(self.left_overs, -self.B)  # flush the buffer
         self.left_overs[-self.B:] = 0
-        self.left_overs = self.left_overs[:self.NFFT - self.B] + y[self.B:]
-        return out * 50
+        self.left_overs[:len(y[self.B:])] = self.left_overs[:len(y[self.B:])] + y[self.B:]
+        return out
 
     def OLS(self, x, h):
         '''Overlap-save convolution'''
         if self.NFFT is None:
-            Nx = max(x.shape)
-            Nh = max(h.shape)
-            self.NFFT = max(self.B, self.next_power_of_2(Nh))
+            self.NFFT = self.B + max(h.shape) - 1
             # Input buffer
             self.OLS_input_buffer = np.zeros(shape=(self.NFFT,))
 
@@ -117,7 +112,7 @@ class FIRfilter():
 
         # Fast convolution
         y = self.fft_conv(self.OLS_input_buffer, h)
-        return y[-self.B:] * 50
+        return y[-self.B:]
 
     def optimize_UPOLS_parameters(self, N, B):
         '''brute-force the optimal parameters for UPOLS
@@ -182,7 +177,6 @@ class FIRfilter():
                 self.nm[m] = np.floor(m * L_partit / self.B)  # FDL active slots
             self.nm = self.nm.astype(int)
             self.FDL = np.zeros((max(self.nm) + 1, self.NFFT), dtype='complex_')  # delay line
-            self.ref = np.ceil(self.NFFT / Nh)  # normalization value
             self.flagIRchanged = False
 
         # (3) Sliding window of the input
@@ -194,7 +188,7 @@ class FIRfilter():
         # convo
         # note: the sum is done in the frequency domain (yep!)
         out = ifft(np.sum(self.FDL[self.nm, :] * self.H, axis=0)).real
-        return out[-self.B:] * 50
+        return out[-self.B:] * self.ref
 
     # def NUPOLS(self,x,h):
     #     '''Non Uniformly Partitioned Overlap-Save
@@ -250,8 +244,8 @@ class FIRfilter():
             print(self.flagIRchanged)
         else:
             h = self.stored_h
-        x = x / 50
-        h = h / 50
+        x = x / self.ref
+        h = h / self.ref
 
         # convolve
         if self.method == 'overlap-save' or self.method == 'ols':
