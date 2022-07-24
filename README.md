@@ -9,10 +9,6 @@ The algorithms are mainly *(but not strictly)* the ones described in **WEFERS, F
 - Overlap-save (OLS);
 - Uniformily Partitioned Overlap-Save (UPOLS) (generalized version)
 
-
-
-*Everything is kinda working at this stage, but keep in mind bugs and mistakes are expected.*
-
 # Requirements
 - numpy 
 
@@ -21,4 +17,5 @@ Although to run the example in [testFIR.py](https://github.com/davircarvalho/pyF
 - pyaudio
 
 # TODO
-- Filter crossover
+- optimize Filter crossover
+- support for multichannel input > multichannel output
