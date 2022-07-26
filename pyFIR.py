@@ -35,7 +35,7 @@ from time import time
 
 
 class FIRfilter():
-    def __init__(self, method="overlap-save", B=512, h=None, partition=None, ref=50):
+    def __init__(self, method="overlap-save", B=512, h=None, partition=None, normalize=True):
         '''
         Performs real-time convolution via FIR filters.
 
@@ -46,18 +46,17 @@ class FIRfilter():
             'OLS' (same as overlap-save), 'OLA' (same as overlap-add),
             'UPOLS' (uniformly partitioned overlap-save). The default is "overlap-save".
         B : int, optional
-            Block size/buffer size, define the size of the audio chunk being procesed 
+            Block size/buffer size, define the size of the audio chunk being procesed
             at a time unit. The default is 512.
         h : np.array, optional
             Impulse response signal to be convolved with the audio input. The default is None.
         partition : int, optional
-            Partition size for the UPOLS filter. For general use it is recommended that 
+            Partition size for the UPOLS filter. For general use it is recommended that
             you supply the impulse response instead of the partion size at class initilization,
             by doing this, the optimal partition size will be calculated by default.
-        ref : int, float, optional
-            Defines a value that the audio signal and impulse response are divided before convolution
-            and multiplied after convolution to avoid distortion at playback. To bypass this 
-            "normalization", set < ref=1 >.The default is 50.
+        normalize : bool, optional
+            Indicate if output should be normalized or not. If True the frame output is going to
+            be normalized to be below 1. The default is True.
 
         Returns
         -------
@@ -72,9 +71,10 @@ class FIRfilter():
         self.stored_h = h        # save IR for comparison next frame (optional input)
         if h is not None:
             self.Nh = max(h.shape)
+            self.generate_ref()
         self.left_overs = np.zeros((self.B,))  # remaining samples from last ifft (OLA)
         self.partition = partition  # partition size (UPOLS)
-        self.ref = ref
+        self.normalize = normalize
 
         validMethods = ['overlap-save', 'overlap-add', 'ols', 'ola', 'upols']
         error_msg = f'Unknown FIRfilter method: "{self.method}", \n Supported methods are: {validMethods}'
@@ -90,7 +90,6 @@ class FIRfilter():
             output[:x.shape[0]] = x
         else:
             output = x
-        print(f'padded out shape {output.shape}')
         return output
 
     def pad_beginning(self, x, padding):
@@ -99,49 +98,16 @@ class FIRfilter():
         output[-x.shape[0]:] = x
         return output
 
-    def next_power_of_2(self, n):
-        return 1 << (int(np.log2(n - 1)) + 1)
+    def generate_ref(self):
+        '''
+        the worst case scenario given a known IR would be to have a region in the  audio input that's filled with ones,
+        this would result in a convolution with output above the 0-1 range.
+        This reference below is the safest form of avoiding clipping for any normalized audio input
+        '''
+        self.ref = np.sum(abs(self.stored_h))
 
-    def fft_conv(self, x, h):
-        # Calculate x fft
-        X = fft(x, self.NFFT)
-        # Calculate h fft
-        if self.flagIRchanged:  # store the IR fft
-            self.H = fft(h, self.NFFT)
-            self.flagIRchanged = False
-        return ifft(X * self.H).real
-
-    def OLA(self, x, h):
-        '''Overlap-add convolution'''
-        if self.NFFT is None:
-            self.NFFT = self.B + max(h.shape) - 1
-            self.left_overs = np.zeros((self.NFFT,))
-
-        # Fast convolution
-        y = self.fft_conv(x, h)
-
-        # Overlap-Add the partial convolution result
-        out = y[:self.B] + self.left_overs[:self.B]
-
-        self.left_overs = np.roll(self.left_overs, -self.B)  # flush the buffer
-        self.left_overs[-self.B:] = 0
-        self.left_overs[:len(y[self.B:])] = self.left_overs[:len(y[self.B:])] + y[self.B:]
-        return out
-
-    def OLS(self, x, h):
-        '''Overlap-save convolution'''
-        if self.NFFT is None:
-            self.NFFT = self.B + max(h.shape) - 1
-            # Input buffer
-            self.OLS_input_buffer = np.zeros(shape=(self.NFFT,))
-
-        # Sliding window of the input
-        self.OLS_input_buffer = np.roll(self.OLS_input_buffer, shift=-self.B)  # previous contents are shifted B samples to the left
-        self.OLS_input_buffer[-self.B:] = x  # next length-B input block is stored rightmost
-
-        # Fast convolution
-        y = self.fft_conv(self.OLS_input_buffer, h)
-        return y[-self.B:]
+    def normalize_output(self, data):
+        return data / self.ref
 
     def optimize_UPOLS_parameters(self, N, B):
         '''brute-force the optimal parameters for UPOLS
@@ -149,7 +115,7 @@ class FIRfilter():
             B: buffer size
         '''
         def cost(B, N, L, K):
-            '''theoretical time estimates for each operation, pag. 211'''
+            # theoretical time estimates for each operation, pag. 211
             return 1 / B * (1.68 * K * np.log2(K) + 3.49 * K * np.log2(K) + 6 * ((K + 1) / 2) + ((N / L) - 1) * 8 * ((K + 1) / 2))
 
         c_opt = Inf
@@ -170,6 +136,57 @@ class FIRfilter():
                     L_opt = L
                     K_opt = K
         return L_opt, K_opt
+
+    def fft_conv(self, x, h):
+        X = fft(x, self.NFFT)
+        if self.flagIRchanged:  # store the IR fft
+            self.H = fft(h, self.NFFT)
+            self.flagIRchanged = False
+        return ifft(X * self.H).real
+
+    # Main ---------------------------------------------------------------------------------------------
+    def OLA(self, x, h):
+        '''
+        Overlap-add convolution
+        '''
+        if self.NFFT is None:
+            self.NFFT = self.B + max(h.shape) - 1
+            self.left_overs = np.zeros((self.NFFT,))
+
+        # Fast convolution
+        y = self.fft_conv(x, h)
+
+        # Overlap-Add the partial convolution result
+        out = y[:self.B] + self.left_overs[:self.B]
+
+        self.left_overs = np.roll(self.left_overs, -self.B)  # flush the buffer
+        self.left_overs[-self.B:] = 0
+        self.left_overs[:len(y[self.B:])] = self.left_overs[:len(y[self.B:])] + y[self.B:]
+        if self.normalize:
+            return self.normalize_output(out)
+        else:
+            return out
+
+    def OLS(self, x, h):
+        '''
+        Overlap-save convolution
+        '''
+        if self.NFFT is None:
+            self.NFFT = self.B + max(h.shape) - 1
+            # Input buffer
+            self.OLS_input_buffer = np.zeros(shape=(self.NFFT,))
+
+        # Sliding window of the input
+        self.OLS_input_buffer = np.roll(self.OLS_input_buffer, shift=-self.B)  # previous contents are shifted B samples to the left
+        self.OLS_input_buffer[-self.B:] = x  # next length-B input block is stored rightmost
+
+        # Fast convolution
+        out = self.fft_conv(self.OLS_input_buffer, h)
+
+        if self.normalize:
+            return self.normalize_output(out[-self.B:])
+        else:
+            return out[-self.B:]
 
     def UPOLS(self, x, h):
         '''(generalized) Uniformly Partitioned Overlap-Save
@@ -217,7 +234,11 @@ class FIRfilter():
         # convo
         # note: the sum is done in the frequency domain (yep!)
         out = ifft(np.sum(self.FDL[self.nm, :] * self.H, axis=0)).real
-        return out[-self.B:] * self.ref
+
+        if self.normalize:
+            return self.normalize_output(out[-self.B:])
+        else:
+            return out[-self.B:]
 
     # def NUPOLS(self,x,h):
     #     '''Non Uniformly Partitioned Overlap-Save
@@ -270,11 +291,10 @@ class FIRfilter():
         if h is not None and np.all(h != self.stored_h):   # check if the impulse response h has changed
             self.flagIRchanged = True
             self.stored_h = h
+            self.generate_ref()
             print(self.flagIRchanged)
         else:
             h = self.stored_h
-        x = x / self.ref
-        h = h / self.ref
 
         # convolve
         if self.method == 'overlap-save' or self.method == 'ols':
