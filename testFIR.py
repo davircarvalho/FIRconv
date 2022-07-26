@@ -25,17 +25,17 @@ def mono2stereo(audio):
 
 
 # Audio input
-audio_in, fs = lb.load('letter.wav', sr=None, mono=False, duration=None, dtype=np.float32)  # binaural input signal
+audio_in, fs = lb.load('letter.wav', sr=None, mono=False, duration=30, dtype=np.float32)  # binaural input signal
 audio_in = mono2stereo(audio_in)
 N_ch = audio_in.shape[0]
 
 # Impulse response
-ir, _ = lb.load('narrow.wav', sr=fs, mono=False, dtype=np.float32)  # binaural input signal
+ir, _ = lb.load('default.wav', sr=fs, mono=False, dtype=np.float32)  # binaural input signal
 ir = mono2stereo(ir)
 
 
 # %% Initialize FIR filter
-buffer_sz = 256
+buffer_sz = 2048
 method = 'upols'
 FIRfilt = []
 for ch in range(N_ch):
@@ -56,10 +56,12 @@ frame_start = 0
 frame_end = frame_start + buffer_sz
 data_out = np.zeros((buffer_sz, N_ch))
 
+mout = []
+
 while frame_end <= max(audio_in.shape):
     # process data
     for ch in range(N_ch):
-        data_out[:, ch] = FIRfilt[ch].process(audio_in[0, frame_start:frame_end])
+        data_out[:, ch] = FIRfilt[ch].process(audio_in[ch, frame_start:frame_end])
 
     # output data
     stream.write(data_out.astype(np.float32), buffer_sz)
@@ -73,5 +75,6 @@ stream.stop_stream()
 stream.close()
 # close PyAudio (5)
 p.terminate()
+
 
 # %%
