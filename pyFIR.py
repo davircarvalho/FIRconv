@@ -141,36 +141,37 @@ class FIRfilter():
                     K_opt = K
         return L_opt, K_opt
 
-    def fft_conv(self, x):
+    def fft_conv(self, x, h):
         X = fft(x, self.NFFT, axis=0)
-        if self.flagIRchanged:  # store the IR fft
-            self.H = fft(self.stored_h, self.NFFT, axis=0)
-            self.flagIRchanged = False
-        return ifft(X * self.H, axis=0).real
+        H = fft(h, self.NFFT, axis=0)
+        self.flagIRchanged = False
+        return ifft(X * H, axis=0).real
 
     # Main ---------------------------------------------------------------------------------------------
-    def OLA(self, x, h):
-        '''
-        Overlap-add convolution
-        '''
-        if self.NFFT is None:
-            self.NFFT = self.B + max(h.shape) - 1
-            self.left_overs = np.squeeze(np.zeros((self.NFFT, self.N_ch)))
-            self.len_y_left = self.NFFT - self.B
+    class OLA(FIRfilter):
+        def __init__(self, x, h):
+            '''
+            Overlap-add convolution
+            '''
+            super(FIRfilter)
+            if self.NFFT is None:
+                self.NFFT = self.B + max(h.shape) - 1
+                self.left_overs = np.squeeze(np.zeros((self.NFFT, self.N_ch)))
+                self.len_y_left = self.NFFT - self.B
 
-        # Fast convolution
-        y = self.fft_conv(x)
+            # Fast convolution
+            y = self.fft_conv(x, h)
 
-        # Overlap-Add the partial convolution result
-        out = y[:self.B, ...] + self.left_overs[:self.B, ...]
+            # Overlap-Add the partial convolution result
+            out = y[:self.B, ...] + self.left_overs[:self.B, ...]
 
-        self.left_overs = np.roll(self.left_overs, -self.B, axis=0)  # flush the buffer
-        self.left_overs[-self.B:, ...] = 0
-        self.left_overs[:self.len_y_left, ...] = self.left_overs[:self.len_y_left, ...] + y[self.B:, ...]
-        if self.normalize:
-            return self.normalize_output(out)
-        else:
-            return out
+            self.left_overs = np.roll(self.left_overs, -self.B, axis=0)  # flush the buffer
+            self.left_overs[-self.B:, ...] = 0
+            self.left_overs[:self.len_y_left, ...] = self.left_overs[:self.len_y_left, ...] + y[self.B:, ...]
+            if self.normalize:
+                return self.normalize_output(out)
+            else:
+                return out
 
     def OLS(self, x, h):
         '''
@@ -297,7 +298,6 @@ class FIRfilter():
             self.flagIRchanged = True
             self.stored_h = h
             self.generate_ref()
-            print(self.flagIRchanged)
         else:
             h = self.stored_h
 
@@ -305,6 +305,11 @@ class FIRfilter():
         if self.method == 'overlap-save' or self.method == 'ols':
             return self.OLS(x, h)
         elif self.method == 'overlap-add' or self.method == 'ola':
-            return self.OLA(x, h)
+            if self.flagIRchanged:
+                audio_previous = self.OLA(x, self.stored_h)
+                audio_future = self.OLA(x, h)
+                # do crossfading
+            else:
+                return self.OLA(x, h)
         elif self.method == 'upols':
             return self.UPOLS(x, h)
