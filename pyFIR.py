@@ -104,7 +104,11 @@ class FIRfilter():
         this would result in a convolution with output above the 0-1 range.
         This reference below is the safest form of avoiding clipping for any normalized audio input
         '''
-        self.ref = np.sum(abs(self.stored_h))
+        self.ref = np.max(np.sum(abs(self.stored_h), axis=0))
+        if np.ndim(self.stored_h) > 1:  # just make this logic to update the number of channels
+            self.N_ch = self.stored_h.shape[1]
+        else:
+            self.N_ch = 1
 
     def normalize_output(self, data):
         return data / self.ref
@@ -137,12 +141,12 @@ class FIRfilter():
                     K_opt = K
         return L_opt, K_opt
 
-    def fft_conv(self, x, h):
-        X = fft(x, self.NFFT)
+    def fft_conv(self, x):
+        X = fft(x, self.NFFT, axis=0)
         if self.flagIRchanged:  # store the IR fft
-            self.H = fft(h, self.NFFT)
+            self.H = fft(self.stored_h, self.NFFT, axis=0)
             self.flagIRchanged = False
-        return ifft(X * self.H).real
+        return ifft(X * self.H, axis=0).real
 
     # Main ---------------------------------------------------------------------------------------------
     def OLA(self, x, h):
@@ -151,17 +155,18 @@ class FIRfilter():
         '''
         if self.NFFT is None:
             self.NFFT = self.B + max(h.shape) - 1
-            self.left_overs = np.zeros((self.NFFT,))
+            self.left_overs = np.squeeze(np.zeros((self.NFFT, self.N_ch)))
+            self.len_y_left = self.NFFT - self.B
 
         # Fast convolution
-        y = self.fft_conv(x, h)
+        y = self.fft_conv(x)
 
         # Overlap-Add the partial convolution result
-        out = y[:self.B] + self.left_overs[:self.B]
+        out = y[:self.B, ...] + self.left_overs[:self.B, ...]
 
-        self.left_overs = np.roll(self.left_overs, -self.B)  # flush the buffer
-        self.left_overs[-self.B:] = 0
-        self.left_overs[:len(y[self.B:])] = self.left_overs[:len(y[self.B:])] + y[self.B:]
+        self.left_overs = np.roll(self.left_overs, -self.B, axis=0)  # flush the buffer
+        self.left_overs[-self.B:, ...] = 0
+        self.left_overs[:self.len_y_left, ...] = self.left_overs[:self.len_y_left, ...] + y[self.B:, ...]
         if self.normalize:
             return self.normalize_output(out)
         else:
@@ -181,7 +186,7 @@ class FIRfilter():
         self.OLS_input_buffer[-self.B:] = x  # next length-B input block is stored rightmost
 
         # Fast convolution
-        out = self.fft_conv(self.OLS_input_buffer, h)
+        out = self.fft_conv(self.OLS_input_buffer)
 
         if self.normalize:
             return self.normalize_output(out[-self.B:])
@@ -288,7 +293,7 @@ class FIRfilter():
 
 # %% Main ###############################################################################
     def process(self, x, h=None):
-        if h is not None and np.all(h != self.stored_h):   # check if the impulse response h has changed
+        if h is not None and np.any(h != self.stored_h):   # check if the impulse response h has changed
             self.flagIRchanged = True
             self.stored_h = h
             self.generate_ref()
