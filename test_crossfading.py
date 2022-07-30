@@ -14,7 +14,7 @@ import os
 import librosa as lb
 import pyaudio
 import numpy as np
-from pyFIR import OLA
+from pyFIR import FIRfilter
 from SOFASonix import SOFAFile as SOFA
 
 
@@ -40,7 +40,7 @@ ir = Obj.Data_IR
 
 # %% Initialize FIR filter
 buffer_sz = 1024
-FIRfilt = OLA(B=buffer_sz, h=ir[0, :, :].T, normalize=True)
+FIRfilt = FIRfilter(method='OLS', B=buffer_sz, h=ir[0, :, :].T)
 
 # %% Stream audio
 # instantiate PyAudio (1)
@@ -55,7 +55,7 @@ stream = p.open(format=pyaudio.paFloat32,
 # play stream (3)
 frame_start = 0
 frame_end = frame_start + buffer_sz
-data_out = np.zeros((buffer_sz, N_ch))
+data_out = np.zeros((buffer_sz, N_ch), order='C')
 
 mout = []
 
@@ -63,16 +63,17 @@ cont = 0
 idx_pos = 0
 while frame_end <= max(audio_in.shape):
     cont += 1
-    if cont % 2 == 0:
-        idx_pos += 1
+    # if cont % 2 == 0:
+    idx_pos += 1
     if idx_pos >= ir.shape[0] - 1:
         idx_pos = 0
 
     # process data
     data_out = FIRfilt.process(audio_in[frame_start:frame_end, :], ir[idx_pos, :, :].T)
+    data_out = np.ascontiguousarray(data_out, dtype=np.float32)
 
     # output data
-    stream.write(data_out.astype(np.float32), buffer_sz)
+    stream.write(data_out, buffer_sz)
 
     # update reading positions
     frame_start = frame_end

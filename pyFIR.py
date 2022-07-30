@@ -64,15 +64,50 @@ class FIRfilter:
         Output has the same size as x and type: np.array
 
         '''
+        self.currentFIR = pyFIRfilter(method, B, h, partition, normalize)
+        self.futureFIR = pyFIRfilter(method, B, h, partition, normalize)
+        self.Xfader = Crossfader(N_cross=B)
+        self.current_h = h
+        self.flagIRchanged = False
+        self.lockXfade = False  # it will only allow for new position after crossfading in done
+
+    def process(self, x, h=None):
+        if h is not None and np.any(h != self.current_h):   # check if the impulse response h has changed
+            self.flagIRchanged = True
+
+        if self.flagIRchanged and not self.lockXfade:
+            self.future_h = h
+            self.lockXfade = True
+        elif self.flagIRchanged and self.lockXfade:
+            pass
+        elif not self.flagIRchanged:
+            self.current_h = h
+
+        # convolve
+        if self.flagIRchanged:
+            currentOUT = self.currentFIR.process(x, self.current_h)
+            futureOUT = self.futureFIR.process(x, self.future_h)
+            out, isDone = self.Xfader.process(currentOUT, futureOUT)  # apply crossfading
+            self.flagIRchanged = not isDone
+            if isDone:
+                self.currentFIR = deepcopy(self.futureFIR)
+                self.lockXfade = False
+            return out
+        else:
+            return self.currentFIR.process(x, self.current_h)
+
+
+class pyFIRfilter:
+    def __init__(self, method, B, h, partition, normalize):
         self.method = method.lower()
         self.B = B                # block size (audio input len, which will also be the output size)
-        self.NFFT = None          # fft/ifft size
-        self.flagIRchanged = True  # check if the IR changed or it's still the same
         self.stored_h = h        # save IR for comparison next frame (optional input)
-        self.Nh = h.shape[0]
-        self.generate_ref()
         self.partition = partition  # partition size (UPOLS)
         self.normalize = normalize
+        self.NFFT = None          # fft/ifft size
+        self.flagHchanged = True  # check if the IR changed or it's still the same
+        self.Nh = h.shape[0]
+        self.generate_ref()
 
         validMethods = ['overlap-save', 'overlap-add', 'ols', 'ola', 'upols']
         error_msg = f'Unknown FIRfilter method: "{self.method}", \n Supported methods are: {validMethods}'
@@ -80,7 +115,7 @@ class FIRfilter:
 
         if ('upols' in self.method) and (partition is None) and (h is not None):
             self.partition, self.NFFT = self.optimize_UPOLS_parameters(self.Nh, self.B)
-            print(f'partition size: {self.partition} \n nfft: {self.NFFT}')
+            # print(f'partition size: {self.partition} \n nfft: {self.NFFT}')
 
     def pad_the_end(self, x, new_length):
         if x.shape[0] < new_length:
@@ -139,20 +174,21 @@ class FIRfilter:
                     K_opt = K
         return L_opt, K_opt
 
-    def fft_conv(self, x, h):
+    def fft_conv(self, x):
         X = fft(x, self.NFFT, axis=0)
-        H = fft(h, self.NFFT, axis=0)
-        self.flagIRchanged = False
-        return ifft(X * H, axis=0).real
+        if self.flagHchanged:  # store the IR fft
+            self.H = fft(self.stored_h, self.NFFT, axis=0)
+            self.flagHchanged = False
+        return ifft(X * self.H, axis=0).real
 
-    def process_OLA(self, x, h):
+    def OLA(self, x):
         if self.NFFT is None:
             self.NFFT = self.B + self.stored_h.shape[0] - 1
             self.left_overs = np.squeeze(np.zeros((self.NFFT, self.N_ch)))
             self.len_y_left = self.NFFT - self.B
 
         # Fast convolution
-        y = self.fft_conv(x, h)
+        y = self.fft_conv(x)
 
         # Overlap-Add the partial convolution result
         out = y[:self.B, ...] + self.left_overs[:self.B, ...]
@@ -165,41 +201,86 @@ class FIRfilter:
         else:
             return out
 
+    def OLS(self, x):
+        if self.NFFT is None:
+            self.NFFT = self.B + self.Nh - 1
+            # Input buffer
+            self.OLS_input_buffer = np.squeeze(np.zeros((self.NFFT, self.N_ch)))
 
-# %% Overlap-add
-class OLA:
-    def __init__(self, B, h, normalize=True):
-        self.currentOLA = FIRfilter(B=B, h=h, normalize=normalize)
-        self.futureOLA = FIRfilter(B=B, h=h, normalize=normalize)
-        self.Xfader = Crossfader(N_cross=B)
-        self.current_h = h
-        self.flagIRchanged = False
-        self.lockXfade = False  # it will only allow for new position after crossfading in done
+        # Sliding window of the input
+        self.OLS_input_buffer = np.roll(self.OLS_input_buffer, shift=-self.B, axis=0)  # previous contents are shifted B samples to the left
+        self.OLS_input_buffer[-self.B:, ...] = x  # next length-B input block is stored rightmost
+
+        # Fast convolution
+        out = self.fft_conv(self.OLS_input_buffer)
+
+        if self.normalize:
+            return self.normalize_output(out[-self.B:, ...])
+        else:
+            return out[-self.B:, ...]
+
+    def UPOLS(self, x, h):
+        if self.flagHchanged:  # only run on on initial call
+            Nh = self.Nh
+            if self.partition is None:
+                print('Running UPOLS parameter optimization, this may take a few minutes to run deppending on the length of the impulse respose, to avoid this optimization prcedure, simply declare a "partition" value at the class initialization')
+                self.partition, self.NFFT = self.optimize_UPOLS_parameters(Nh, self.B)
+                L_partit = self.partition
+            else:
+                L_partit = self.partition
+                dmax = self.B - np.gcd(L_partit, self.B)
+                self.NFFT = self.B + L_partit + dmax
+
+            self.P = int(np.ceil(Nh / L_partit))  # number of partitions done
+            self.input_buffer = np.zeros(shape=(self.NFFT,))  # Initialize input buffer
+            # Initialize filter and FDL
+            self.nm = np.zeros((self.P,))  # tells us which FDL positions should be used
+            self.H = np.zeros((self.P, self.NFFT), dtype='complex_')  # partitioned filters (freq domain)
+
+            # (1) split original filter into P length-L sub filters
+            for m, ii in enumerate(range(0, Nh, L_partit)):
+                try:
+                    h_partit = h[ii:ii + L_partit]
+                except Exception:
+                    h_partit = self.pad_the_end(h[ii:], L_partit)
+
+                # (2) incorporate "remainder delays"
+                dm = np.mod(m * L_partit, self.B)
+                h_pad = self.pad_beginning(h_partit, dm)
+                self.H[m, :] = fft(h_pad, n=self.NFFT)
+                self.nm[m] = np.floor(m * L_partit / self.B)  # FDL active slots
+            self.nm = self.nm.astype(int)
+            self.FDL = np.zeros((max(self.nm) + 1, self.NFFT), dtype='complex_')  # delay line
+            self.flagHchanged = False
+
+        # (3) Sliding window of the input
+        self.input_buffer = np.roll(self.input_buffer, shift=-self.B)  # previous contents are shifted B samples to the left
+        self.input_buffer[-self.B:] = x  # next length-B input block is stored rightmost
+        # (4) Stream
+        self.FDL = np.roll(self.FDL, shift=1, axis=0)  # shift the FDL to create space for current input
+        self.FDL[0, :] = fft(self.input_buffer)  # add current buffer to the first FDL slot
+        # convo
+        # note: the sum is done in the frequency domain (yep!)
+        out = ifft(np.sum(self.FDL[self.nm, :] * self.H, axis=0)).real
+
+        if self.normalize:
+            return self.normalize_output(out[-self.B:])
+        else:
+            return out[-self.B:]
 
     def process(self, x, h=None):
-        if h is not None and np.any(h != self.current_h):   # check if the impulse response h has changed
-            self.flagIRchanged = True
-
-        if self.flagIRchanged and not self.lockXfade:
-            self.future_h = h
-            self.lockXfade = True
-        elif self.flagIRchanged and self.lockXfade:
-            pass
-        elif not self.flagIRchanged:
-            self.current_h = h
-
-        # convolve
-        if self.flagIRchanged:
-            currentOUT = self.currentOLA.process_OLA(x, self.current_h)
-            futureOUT = self.futureOLA.process_OLA(x, self.future_h)
-            out, isDone = self.Xfader.process(currentOUT, futureOUT)  # apply crossfading
-            self.flagIRchanged = not isDone
-            if isDone:
-                self.currentOLA = deepcopy(self.futureOLA)
-                self.lockXfade = False
-            return out
+        if h is not None and np.any(h != self.stored_h):   # check if the impulse response h has changed
+            self.flagHchanged = True
+            self.stored_h = h
         else:
-            return self.currentOLA.process_OLA(x, self.current_h)
+            h = self.stored_h
+
+        if self.method == 'overlap-save' or self.method == 'ols':
+            return self.OLS(x)
+        elif self.method == 'overlap-add' or self.method == 'ola':
+            return self.OLA(x)
+        elif self.method == 'upols':
+            return self.UPOLS(x, h)
 
 
 # %% Crossfading
@@ -271,79 +352,3 @@ class Crossfader:
         self.xfade_up = tile_2_shape(self.xfade_up, A)
         self.xfade_down = tile_2_shape(self.xfade_down, A)  # if A and B have different shapes you're doing something wrong
         self.reset_faders = False
-
-
-# %%
-    # def OLS(self, x, h):
-    #     '''
-    #     Overlap-save convolution
-    #     '''
-    #     if self.NFFT is None:
-    #         self.NFFT = self.B + max(h.shape) - 1
-    #         # Input buffer
-    #         self.OLS_input_buffer = np.zeros(shape=(self.NFFT,))
-
-    #     # Sliding window of the input
-    #     self.OLS_input_buffer = np.roll(self.OLS_input_buffer, shift=-self.B)  # previous contents are shifted B samples to the left
-    #     self.OLS_input_buffer[-self.B:] = x  # next length-B input block is stored rightmost
-
-    #     # Fast convolution
-    #     out = self.fft_conv(self.OLS_input_buffer)
-
-    #     if self.normalize:
-    #         return self.normalize_output(out[-self.B:])
-    #     else:
-    #         return out[-self.B:]
-
-    # def UPOLS(self, x, h):
-    #     '''(generalized) Uniformly Partitioned Overlap-Save
-    #         - generalized means that you can pick the partition size
-    #     '''
-    #     if self.flagIRchanged:  # only run on on initial call
-    #         Nh = max(h.shape)
-    #         if self.partition is None:
-    #             print('Running UPOLS parameter optimization, this may take a few minutes to run deppending on the length of the impulse respose, to avoid this optimization prcedure, simply declare a "partition" value at the class initialization')
-    #             self.partition, self.NFFT = self.optimize_UPOLS_parameters(Nh, self.B)
-    #             L_partit = self.partition
-    #         else:
-    #             L_partit = self.partition
-    #             dmax = self.B - np.gcd(L_partit, self.B)
-    #             self.NFFT = self.B + L_partit + dmax
-
-    #         self.P = int(np.ceil(Nh / L_partit))  # number of partitions done
-    #         self.input_buffer = np.zeros(shape=(self.NFFT,))  # Initialize input buffer
-    #         # Initialize filter and FDL
-    #         self.nm = np.zeros((self.P,))  # tells us which FDL positions should be used
-    #         self.H = np.zeros((self.P, self.NFFT), dtype='complex_')  # partitioned filters (freq domain)
-
-    #         # (1) split original filter into P length-L sub filters
-    #         for m, ii in enumerate(range(0, Nh, L_partit)):
-    #             try:
-    #                 h_partit = h[ii:ii + L_partit]
-    #             except Exception:
-    #                 h_partit = self.pad_the_end(h[ii:], L_partit)
-
-    #             # (2) incorporate "remainder delays"
-    #             dm = np.mod(m * L_partit, self.B)
-    #             h_pad = self.pad_beginning(h_partit, dm)
-    #             self.H[m, :] = fft(h_pad, n=self.NFFT)
-    #             self.nm[m] = np.floor(m * L_partit / self.B)  # FDL active slots
-    #         self.nm = self.nm.astype(int)
-    #         self.FDL = np.zeros((max(self.nm) + 1, self.NFFT), dtype='complex_')  # delay line
-    #         self.flagIRchanged = False
-
-    #     # (3) Sliding window of the input
-    #     self.input_buffer = np.roll(self.input_buffer, shift=-self.B)  # previous contents are shifted B samples to the left
-    #     self.input_buffer[-self.B:] = x  # next length-B input block is stored rightmost
-    #     # (4) Stream
-    #     self.FDL = np.roll(self.FDL, shift=1, axis=0)  # shift the FDL to create space for current input
-    #     self.FDL[0, :] = fft(self.input_buffer)  # add current buffer to the first FDL slot
-    #     # convo
-    #     # note: the sum is done in the frequency domain (yep!)
-    #     out = ifft(np.sum(self.FDL[self.nm, :] * self.H, axis=0)).real
-
-    #     if self.normalize:
-    #         return self.normalize_output(out[-self.B:])
-    #     else:
-    #         return out[-self.B:]
-

@@ -30,13 +30,13 @@ audio_in = mono2stereo(audio_in)
 N_ch = audio_in.shape[0]
 
 # Impulse response
-ir, _ = lb.load('default.wav', sr=fs, mono=False, dtype=np.float32)  # binaural input signal
+ir, _ = lb.load('narrow.wav', sr=fs, mono=False, dtype=np.float32)  # binaural input signal
 ir = mono2stereo(ir)
 
 
 # %% Initialize FIR filter
-buffer_sz = 2048
-method = 'upols'
+buffer_sz = 512
+method = 'ols'
 FIRfilt = []
 for ch in range(N_ch):
     FIRfilt.append(FIRfilter(method, buffer_sz, h=ir[ch, :]))
