@@ -17,5 +17,4 @@ Although to run the example in [testFIR.py](https://github.com/davircarvalho/pyF
 - pyaudio
 
 # TODO
-- optimize Filter crossover
-- support for multichannel input > multichannel output
+- support for multichannel input > multichannel output (only upols missing now)
