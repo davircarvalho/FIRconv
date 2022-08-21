@@ -91,6 +91,7 @@ class FIRfilter:
             self.flagIRchanged = not isDone
             if isDone:
                 self.currentFIR = deepcopy(self.futureFIR)
+                self.current_h = deepcopy(self.future_h)
                 self.lockXfade = False
             return out
         else:
@@ -329,7 +330,7 @@ class Crossfader:
             self.isDone = True
             self.reset_faders = True
 
-        # (3) - Case the crossfading is already done but didn't nothing catch it
+        # (3) - Case the crossfading is already done but didn't catch it
         else:
             self.reset_faders = True
             return B, True
