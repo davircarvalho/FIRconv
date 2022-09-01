@@ -17,7 +17,6 @@ pip install -e .
 ```
 
 # TODO
-- optimize Filter crossover
-- support for multichannel input > multichannel output
+- support for multichannel input > multichannel output (only upols missing now)
 
 Collaborations are more than welcome!
