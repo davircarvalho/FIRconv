@@ -16,7 +16,5 @@ cd pyFIR
 pip install -e .
 ```
 
-# TODO
-- support for multichannel input > multichannel output (only upols missing now)
-
+___________________________________________________________________
 Collaborations are more than welcome!
