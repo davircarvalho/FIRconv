@@ -120,16 +120,16 @@ class pyFIRfilter:
 
     def pad_the_end(self, x, new_length):
         if x.shape[0] < new_length:
-            output = np.zeros((new_length,))
-            output[:x.shape[0]] = x
+            output = np.squeeze(np.zeros((new_length, self.N_ch)))
+            output[:x.shape[0], ...] = x
         else:
             output = x
         return output
 
     def pad_beginning(self, x, padding):
-        new_length = max(x.shape) + padding
-        output = np.zeros((new_length,))
-        output[-x.shape[0]:] = x
+        new_length = x.shape[0] + padding
+        output = np.squeeze(np.zeros((new_length, self.N_ch)))
+        output[-x.shape[0]:, ...] = x
         return output
 
     def generate_ref(self):
@@ -138,11 +138,13 @@ class pyFIRfilter:
         this would result in a convolution with output above the 0-1 range.
         This reference below is the safest form of avoiding clipping for any normalized audio input
         '''
-        self.ref = np.max(np.sum(abs(self.stored_h), axis=0))
-        if np.ndim(self.stored_h) > 1:  # just make this logic to update the number of channels
+        self.ref = np.sqrt(np.max(np.sum(abs(self.stored_h), axis=0)))
+        if np.ndim(self.stored_h) > 1:  # just included this logic to update the number of channels
             self.N_ch = self.stored_h.shape[1]
+            self.fftAxis = -2  # useful for upols only
         else:
             self.N_ch = 1
+            self.fftAxis = 0  # useful for upols only
 
     def normalize_output(self, data):
         return data / self.ref
@@ -233,39 +235,42 @@ class pyFIRfilter:
                 self.NFFT = self.B + L_partit + dmax
 
             self.P = int(np.ceil(Nh / L_partit))  # number of partitions done
-            self.input_buffer = np.zeros(shape=(self.NFFT,))  # Initialize input buffer
+            self.input_buffer = np.squeeze(np.zeros((self.NFFT, self.N_ch)))  # Initialize input buffer
             # Initialize filter and FDL
             self.nm = np.zeros((self.P,))  # tells us which FDL positions should be used
-            self.H = np.zeros((self.P, self.NFFT), dtype='complex_')  # partitioned filters (freq domain)
+            self.H = np.squeeze(np.zeros((self.P, self.NFFT, self.N_ch), dtype='complex_'))  # partitioned filters (freq domain)
 
             # (1) split original filter into P length-L sub filters
             for m, ii in enumerate(range(0, Nh, L_partit)):
                 try:
-                    h_partit = h[ii:ii + L_partit]
+                    h_partit = h[ii:(ii + L_partit), ...]
                 except Exception:
-                    h_partit = self.pad_the_end(h[ii:], L_partit)
+                    h_partit = self.pad_the_end(h[ii:, ...], L_partit)
 
                 # (2) incorporate "remainder delays"
                 dm = np.mod(m * L_partit, self.B)
                 h_pad = self.pad_beginning(h_partit, dm)
-                self.H[m, :] = fft(h_pad, n=self.NFFT)
+                self.H[m, ...] = fft(h_pad, n=self.NFFT, axis=0)
                 self.nm[m] = np.floor(m * L_partit / self.B)  # FDL active slots
             self.nm = self.nm.astype(int)
-            self.FDL = np.zeros((max(self.nm) + 1, self.NFFT), dtype='complex_')  # delay line
+            self.FDL = np.squeeze(np.zeros((max(self.nm) + 1, self.NFFT, self.N_ch), dtype='complex_'))  # delay line
+            if np.ndim(self.FDL) == 1:
+                self.FDL = np.expand_dims(self.FDL, axis=0)  # case self.nm==0
+
             self.flagHchanged = False
 
         # (3) Sliding window of the input
-        self.input_buffer = np.roll(self.input_buffer, shift=-self.B)  # previous contents are shifted B samples to the left
-        self.input_buffer[-self.B:] = x  # next length-B input block is stored rightmost
+        self.input_buffer = np.roll(self.input_buffer, shift=-self.B, axis=0)  # previous contents are shifted B samples to the left
+        self.input_buffer[-self.B:, ...] = x  # next length-B input block is stored rightmost
         # (4) Stream
         self.FDL = np.roll(self.FDL, shift=1, axis=0)  # shift the FDL to create space for current input
-        self.FDL[0, :] = fft(self.input_buffer)  # add current buffer to the first FDL slot
+        self.FDL[0, ...] = fft(self.input_buffer, axis=self.fftAxis)  # add current buffer to the first FDL slot
         # convo
         # note: the sum is done in the frequency domain (yep!)
-        out = ifft(np.sum(self.FDL[self.nm, :] * self.H, axis=0)).real
+        out = ifft(np.sum(self.FDL[self.nm, ...] * self.H, axis=0), axis=self.fftAxis).real
 
         if self.normalize:
-            return self.normalize_output(out[-self.B:])
+            return self.normalize_output(out[-self.B:, ...])
         else:
             return out[-self.B:]
 
