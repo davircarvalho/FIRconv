@@ -31,7 +31,7 @@ The algorithms are mainly *(but not strictly)* the ones described in **WEFERS, F
 - Overlap-save (OLS);
 - Uniformily Partitioned Overlap-Save (UPOLS) (generalized version)
 
-# Instalation
+# Installation
 Use pip to install FIRconv:
 ```
 $ pip install FIRconv
