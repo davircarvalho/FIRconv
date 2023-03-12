@@ -1,5 +1,5 @@
 '''
-pyFIR - 2022
+FIRconv - 2022
 --------------------------------------------
 Python FIR filters for real-time convolution
 --------------------------------------------
@@ -11,7 +11,7 @@ Play around and test the filter modes
 
 # %% Import libs
 import numpy as np
-from pyFIR import FIRfilter
+from FIRconv import FIRfilter
 import matplotlib.pyplot as plt
 
 

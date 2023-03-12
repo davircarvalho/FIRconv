@@ -1,7 +1,7 @@
 '''
-pyFIR - 2023
+FIRconv - 2023
 ------------------------------------------------------------------------------
-Python FIR filters for real-time convolution
+FIR filters for real-time convolution
 ------------------------------------------------------------------------------
 
 MIT License
