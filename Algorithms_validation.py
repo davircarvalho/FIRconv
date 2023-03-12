@@ -10,8 +10,6 @@ Play around and test the filter modes
 '''
 
 # %% Import libs
-import librosa as lb
-import pyaudio
 import numpy as np
 from pyFIR import FIRfilter
 import matplotlib.pyplot as plt
@@ -19,15 +17,15 @@ import matplotlib.pyplot as plt
 
 # %% Load Inputs
 fs = 48000
-audio_in = np.random.rand(10 * fs)
+audio_in = np.random.rand(3 * fs)
 N_ch = 1
 
 # Impulse response
-ir = np.random.rand(fs // 8)
+ir = np.random.rand(2**10)
 
 
 # %% Initialize FIR filter
-buffer_sz = fs
+buffer_sz = 2**11
 methods = ['ola', 'ols', 'upols']
 FIRfilt = []
 for method in methods:
@@ -89,3 +87,6 @@ plt.plot(conv_truth[:xlim] - out_upols[:xlim], label='uniformly partitioned over
 plt.legend()
 plt.xlim([0, xlim])
 plt.ylabel('Error')
+
+
+# %%
