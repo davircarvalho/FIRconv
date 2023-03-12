@@ -38,7 +38,7 @@ $ pip install FIRconv
 ```
 
 # Getting started
-Bellow there's a pseudo-code howing how to setup a basic use of FIRconv for real time convolutions.
+Bellow there's a pseudo-code showing how to setup a basic use of FIRconv for real time convolutions.
 
 ```python
 from FIRconv import FIRfilter
