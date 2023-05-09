@@ -17,15 +17,16 @@ import matplotlib.pyplot as plt
 
 # %% Load Inputs
 fs = 48000
-audio_in = np.random.rand(3 * fs)
+audio_in = np.longdouble(np.random.rand(5 * fs))
 N_ch = 1
-
+eps = np.finfo(np.longdouble).resolution
 # Impulse response
-ir = np.random.rand(2**10)
+ir = np.longdouble(np.random.rand(2**10))
 
+audio_in = np.hstack((audio_in, np.zeros_like(ir)))
 
 # %% Initialize FIR filter
-buffer_sz = 2**11
+buffer_sz = 2**13
 methods = ['ola', 'ols', 'upols']
 FIRfilt = []
 for method in methods:
@@ -69,7 +70,7 @@ out_ola = normalizeme(out_ola)
 out_ols = normalizeme(out_ols)
 out_upols = normalizeme(out_upols)
 
-xlim = max(audio_in.shape) - buffer_sz
+xlim = max(out_upols.shape)
 
 plt.figure()
 plt.plot(conv_truth, label='ground truth')
@@ -80,13 +81,16 @@ plt.xlim([0, xlim])
 plt.legend()
 
 plt.figure()
-plt.plot(conv_truth[:xlim] - conv_truth[:xlim], label='ground truth')
-plt.plot(conv_truth[:xlim] - out_ola[:xlim], label='overlap-add')
-plt.plot(conv_truth[:xlim] - out_ols[:xlim], label='overlap-save')
-plt.plot(conv_truth[:xlim] - out_upols[:xlim], label='uniformly partitioned overlap-save')
-plt.legend()
-plt.xlim([0, xlim])
+# plt.plot(np.abs(conv_truth[:xlim] - conv_truth[:xlim]), label='ground truth')
+plt.plot(np.abs(conv_truth[:xlim] - out_ola[:xlim]), label='Overlap-Add', color='k')
+plt.plot(np.abs(conv_truth[:xlim] - out_ols[:xlim]), label='Overlap-Save', alpha=0.45)
+plt.plot(np.abs(conv_truth[:xlim] - out_upols[:xlim]), label='Uniformly Partitioned Overlap-Save', alpha=0.45)
+plt.axhline(eps, linestyle='dashed', linewidth=2, color='k', label='Numerical resolution')
 plt.ylabel('Error')
+plt.xlabel('Time (samples)')
+plt.xlim([0, xlim])
+plt.title('')
+plt.legend()
 
 
 # %%

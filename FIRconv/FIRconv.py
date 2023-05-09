@@ -28,7 +28,6 @@ SOFTWARE.
 '''
 
 import numpy as np
-from numpy.core.numeric import Inf
 from numpy.fft import fft, ifft
 from copy import deepcopy
 
@@ -36,7 +35,7 @@ from copy import deepcopy
 class FIRfilter:
     def __init__(self, method="overlap-save", blockSize=512, h=None, partition=None, normalize=True):
         '''
-        Performs real-time convolution via FIR filters. This class is a wrapper for the pyFIRfilter()
+        Performs real-time convolution with FIR filters. This class is a wrapper for the pyFIRfilter()
         which allows for smooth crossover when changing filters at runtime. For most cases this class
         should be prefered.
 
@@ -170,9 +169,9 @@ class pyFIRfilter:
         '''
         def cost(B, N, L, K):
             # theoretical time estimates for each operation, pag. 211
-            return 1 / B * (1.68 * K * np.log2(K) + 3.49 * K * np.log2(K) + 6 * ((K + 1) / 2) + ((N / L) - 1) * 8 * ((K + 1) / 2))
+            return 1. / B * (1.68 * K * np.log2(K) + 3.49 * K * np.log2(K) + 6. * ((K + 1.) / 2.) + ((N / L) - 1.) * 8. * ((K + 1.) / 2.))
 
-        c_opt = Inf
+        c_opt = np.Inf
         rang = np.array([2**k for k in range(0, int(np.log2(N)))]).astype('int')
         for L in rang:
             d_max = B - np.gcd(L, B)
@@ -200,7 +199,7 @@ class pyFIRfilter:
 
     def _OLA(self, x):
         if self.NFFT is None:
-            self.NFFT = self.B + self.stored_h.shape[0] - 1
+            self.NFFT = self.B + self.Nh - 1
             self.left_overs = np.squeeze(np.zeros((self.NFFT, self.N_ch)))
             self.len_y_left = self.NFFT - self.B
 
@@ -211,7 +210,7 @@ class pyFIRfilter:
         out = y[:self.B, ...] + self.left_overs[:self.B, ...]
 
         self.left_overs = np.roll(self.left_overs, -self.B, axis=0)  # flush the buffer
-        self.left_overs[-self.B:, ...] = 0
+        self.left_overs[-self.B:, ...] = 0.
         self.left_overs[:self.len_y_left, ...] = self.left_overs[:self.len_y_left, ...] + y[self.B:, ...]
         if self.normalize:
             return self._normalize_output(out)
