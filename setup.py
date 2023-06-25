@@ -6,7 +6,7 @@ setup(
     author="Davi Carvalho",
     url="https://github.com/davircarvalho/FIRconv",
     author_email="r.davicarvalho@gmail.com",
-    version="0.0.1",
+    version="0.0.3",
     install_requires=[
         "numpy"
         #"librosa",
