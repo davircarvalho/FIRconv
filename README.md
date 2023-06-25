@@ -21,7 +21,7 @@
 <hr>
 
 
-Python implementations of Finite Impulse Response (FIR) filters for real-time convolutions.
+Python implementations of real-time convolution algorithms for Finite Impulse Response (FIR) filters.
 
 The algorithms are mainly *(but not strictly)* the ones described in **WEFERS, Frank. Partitioned convolution algorithms for real-time auralization. Logos Verlag Berlin GmbH, 2015**. found [here](http://publications.rwth-aachen.de/record/466561/files/466561.pdf?subformat=pdfa&version=1).
 
@@ -29,7 +29,7 @@ The algorithms are mainly *(but not strictly)* the ones described in **WEFERS, F
 # Current algorithms
 - Overlap-add (OLA);
 - Overlap-save (OLS);
-- Uniformily Partitioned Overlap-Save (UPOLS) (generalized version)
+- Uniformily Partitioned Overlap-Save (UPOLS) (generalized/optimized version)
 
 # Installation
 Use pip to install FIRconv:
@@ -57,6 +57,6 @@ while True:
 ```
 
 
-- For more in-depth examples have a look at [testFIR.py](https://github.com/davircarvalho/FIRconv/blob/main/testFIR.py) or [Algorithms_validationpy](https://github.com/davircarvalho/FIRconv/blob/main/Algorithms_validation.py)
+- For more in-depth examples have a look at [testFIR.py](https://github.com/davircarvalho/FIRconv/blob/main/testFIR.py) or [Algorithms_validation.py](https://github.com/davircarvalho/FIRconv/blob/main/Algorithms_validation.py)
 ___________________________________________________________________
 Collaborations are more than welcome!
