@@ -33,7 +33,7 @@ from copy import deepcopy
 
 
 class FIRfilter:
-    def __init__(self, method="overlap-save", blockSize=512, h=None, partition=None, normalize=True):
+    def __init__(self, method="overlap-save", blockSize=512, h=None, partition=None, normalize=True, xfadeLen=None):
         '''
         Performs real-time convolution with FIR filters. This class is a wrapper for the pyFIRfilter()
         which allows for smooth crossover when changing filters at runtime. For most cases this class
@@ -57,6 +57,9 @@ class FIRfilter:
         normalize : bool, optional
             Indicate if output should be normalized or not. If True the frame output is going to
             be normalized to be below 1. The default is True.
+        xfadeLen : int, optional 
+            Sets the length of the crossfading when switching filters. If None it is set to 
+            (block_size / 2)
 
         Returns
         -------
@@ -67,11 +70,14 @@ class FIRfilter:
         self.B = blockSize
         self.currentFIR = pyFIRfilter(method, blockSize, h, partition, normalize)
         self.futureFIR = pyFIRfilter(method, blockSize, h, partition, normalize)
-        # self.Xfader = Crossfader(N_cross=B, N_ch=self.N_ch)
+
         self.current_h = h
         self.flagIRchanged = False
         self.lockXfade = False  # it will only allow for new position after crossfading in done
-
+        if xfadeLen is None:
+            self.xfadeLen = self.B//2
+        else:
+            self.xfadeLen = xfadeLen
     def process(self, x, h=None):
         # initialize crossfader now that we know the number of channels in the input
         if not hasattr(self, 'Xfader'):
@@ -79,7 +85,7 @@ class FIRfilter:
                 Nch = 1
             else:
                 Nch = x.shape[-1]
-            self.Xfader = Crossfader(N_cross=2*self.B, N_ch=Nch)
+            self.Xfader = Crossfader(N_cross=self.xfadeLen, N_ch=Nch)
 
 
         if h is not None and np.any(h != self.current_h):   # check if the impulse response h has changed
@@ -116,11 +122,12 @@ class pyFIRfilter:
         self.method = method.lower()
         self.B = blockSize                # block size (audio input len, which will also be the output size)
         self.stored_h = h        # save IR for comparison next frame (optional input)
-        self.partition = partition  # partition size (UPOLS)
+        self.LEN_partitions = partition  # partition size (UPOLS)
         self.normalize = normalize
         self.NFFT = None          # fft/ifft size
         self.flagHchanged = True  # check if the IR changed or it's still the same
         self.Nh = h.shape[0]
+        self.input_buffer = None
         self._generate_ref()
 
         validMethods = ['overlap-save', 'overlap-add', 'ols', 'ola', 'upols']
@@ -128,8 +135,8 @@ class pyFIRfilter:
         assert self.method in validMethods, error_msg
 
         if ('upols' in self.method) and (partition is None) and (h is not None):
-            self.partition, self.NFFT = self._optimize_UPOLS_parameters(self.Nh, self.B)
-            # print(f'partition size: {self.partition} \n nfft: {self.NFFT}')
+            self.LEN_partitions, self.NFFT = self._optimize_UPOLS_parameters(self.Nh, self.B)
+            # print(f'partition size: {self.LEN_partitions} \n nfft: {self.NFFT}')
 
     def _pad_the_end(self, x, new_length):
         if x.shape[0] < new_length:
@@ -237,46 +244,41 @@ class pyFIRfilter:
 
     def _UPOLS(self, x, h):
         if self.flagHchanged:  # only run on on initial call
-            Nh = self.Nh
-            if self.partition is None:
+            if (self.LEN_partitions is None) or (self.NFFT is None):
                 print('Running UPOLS parameter optimization, this may take a few minutes to run deppending on the length of the impulse respose, to avoid this optimization prcedure, simply declare a "partition" value at the class initialization')
-                self.partition, self.NFFT = self._optimize_UPOLS_parameters(Nh, self.B)
-                L_partit = self.partition
-            else:
-                L_partit = self.partition
-                dmax = self.B - np.gcd(L_partit, self.B)
-                self.NFFT = self.B + L_partit + dmax
-
-            self.P = int(np.ceil(Nh / L_partit))  # number of partitions done
-            self.input_buffer = np.squeeze(np.zeros((self.NFFT, self.N_ch)))  # Initialize input buffer
-            # Initialize filter and FDL
-            self.nm = np.zeros((self.P,))  # tells us which FDL positions should be used
-            self.H = np.zeros((self.P, self.NFFT, self.N_ch), dtype='complex_')  # partitioned filters (freq domain)
-            if self.N_ch == 1:
-                self.H = np.squeeze(self.H, axis=-1)
+                self.LEN_partitions, self.NFFT = self._optimize_UPOLS_parameters(self.Nh, self.B)
+                # dmax = self.B - np.gcd(self.LEN_partitions, self.B)
+                # self.NFFT = self.B + self.LEN_partitions + dmax
+            elif self.input_buffer is None:  # initialize variables that depend only on the size of stuff
+                self.input_buffer = np.squeeze(np.zeros((self.NFFT, self.N_ch)))  # Initialize input buffer
+                self.N_partitions = int(np.ceil(self.Nh / self.LEN_partitions))  # number of partitions done
+                # Initialize filter and FDL
+                self.H = np.zeros((self.N_partitions, self.NFFT, self.N_ch), dtype=complex)  # partitioned filters (freq domain)
+                # calculate remainder delays
+                m = np.arange(self.N_partitions)
+                self.pre_delays = np.mod(m * self.LEN_partitions, self.B)    
+                self.active_FDL_idx = (m * self.LEN_partitions // self.B).astype(int)  # # tells us which FDL positions should be used (FDL active slots)        
+                self.FDL = np.zeros((max(self.active_FDL_idx) + 1, self.NFFT, self.N_ch), dtype=complex)  # delay line
+                if self.N_ch == 1:
+                    self.FDL = np.squeeze(self.FDL, axis=-1)
+                if np.ndim(self.FDL) == 1:
+                    self.FDL = np.expand_dims(self.FDL, axis=0)  # case self.active_FDL_idx==0
+                if self.N_ch == 1:
+                    self.H = np.squeeze(self.H, axis=-1)
 
             # (1) split original filter into P length-L sub filters
-            for m, ii in enumerate(range(0, Nh, L_partit)):
+            for m, ii in enumerate(range(0, self.Nh, self.LEN_partitions)):
                 try:
-                    h_partit = h[ii:(ii + L_partit), ...]
-                except Exception:
-                    h_partit = self._pad_the_end(h[ii:, ...], L_partit)
+                    h_partit = h[ii:(ii + self.LEN_partitions), ...]
+                except Exception:  # triggers length of IR is not a multiple of the number of partitions 
+                    h_partit = self._pad_the_end(h[ii:, ...], self.LEN_partitions)
 
                 # (2) incorporate "remainder delays"
-                dm = np.mod(m * L_partit, self.B)
-                h_pad = self._pad_beginning(h_partit, dm)
+                h_pad = self._pad_beginning(h_partit, self.pre_delays[m])
                 self.H[m, ...] = fft(h_pad, n=self.NFFT, axis=0)
-                self.nm[m] = np.floor(m * L_partit / self.B)  # FDL active slots
-            self.nm = self.nm.astype(int)
-            self.FDL = np.zeros((max(self.nm) + 1, self.NFFT, self.N_ch), dtype='complex_')  # delay line
-            if self.N_ch == 1:
-                self.FDL = np.squeeze(self.FDL, axis=-1)
-
-            if np.ndim(self.FDL) == 1:
-                self.FDL = np.expand_dims(self.FDL, axis=0)  # case self.nm==0
-
+            # Flag that the required changes have been made to accomodate the new filter
             self.flagHchanged = False
-
+            
         # (3) Sliding window of the input
         self.input_buffer = np.roll(self.input_buffer, shift=-self.B, axis=0)  # previous contents are shifted B samples to the left
         self.input_buffer[-self.B:, ...] = x  # next length-B input block is stored rightmost
@@ -285,7 +287,7 @@ class pyFIRfilter:
         self.FDL[0, ...] = fft(self.input_buffer, axis=self.fftAxis)  # add current buffer to the first FDL slot
         # convo
         # note: the sum is done in the frequency domain (yep!)
-        out = ifft(np.sum(self.FDL[self.nm, ...] * self.H, axis=0), axis=self.fftAxis).real
+        out = ifft(np.sum(self.FDL[self.active_FDL_idx, ...] * self.H, axis=0), axis=self.fftAxis).real
 
         if self.normalize:
             return self._normalize_output(out[-self.B:, ...])
@@ -340,7 +342,7 @@ class Crossfader:
 
         frame_sz = A.shape[0]
         # (1) - Case the length of the xfade is longer than the frame
-        if self.xfade_up.shape[0] > frame_sz:
+        if self.xfade_up.shape[0] >= frame_sz:
             C = (A * self.xfade_down[:frame_sz, ...]) + (B * self.xfade_up[:frame_sz, ...])
             # Delete the fader part that was already used
             self.xfade_up = np.delete(self.xfade_up, range(frame_sz), axis=0)
