@@ -42,7 +42,6 @@ Bellow there's a pseudo-code showing how to setup a basic use of FIRconv for rea
 
 ```python
 from FIRconv import FIRfilter
-import numpy as np
 
 # Initialize FIR filter
 bufferSize = 2**10
@@ -52,8 +51,6 @@ FIRfilter(method, bufferSize, h=IR)
 while True:
   output = FIRfilter.process(audio)
   play(output)
-
-
 ```
 
 
